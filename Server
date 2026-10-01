@@ -1,0 +1,182 @@
+const http = require("http");
+const WebSocket = require("ws");
+
+const PORT = process.env.PORT || 3000;
+
+const server = http.createServer((req, res) => {
+  res.writeHead(200, {
+    "Content-Type": "text/plain; charset=utf-8"
+  });
+
+  res.end("🐂 BULL TERRORS ONLINE SERVER");
+});
+
+const wss = new WebSocket.Server({ server });
+
+const players = new Map();
+
+function broadcast(data) {
+  const message = JSON.stringify(data);
+
+  for (const client of wss.clients) {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(message);
+    }
+  }
+}
+
+wss.on("connection", (socket) => {
+
+  const id = Math.random()
+    .toString(36)
+    .substring(2, 10);
+
+  const player = {
+    id,
+    name: "Player",
+    x: 0,
+    y: 0,
+    z: 0,
+    rotation: 0,
+    hp: 100,
+    kills: 0,
+    weapon: "BULL AK"
+  };
+
+  players.set(id, player);
+
+  socket.send(JSON.stringify({
+    type: "welcome",
+    id
+  }));
+
+  broadcast({
+    type: "players",
+    players: [...players.values()]
+  });
+
+  socket.on("message", (raw) => {
+
+    try {
+
+      const msg = JSON.parse(raw.toString());
+      const current = players.get(id);
+
+      if (!current) return;
+
+      if (msg.type === "name") {
+
+        const name = String(msg.name || "Player")
+          .trim()
+          .slice(0, 20);
+
+        if (name) {
+          current.name = name;
+        }
+
+        broadcast({
+          type: "players",
+          players: [...players.values()]
+        });
+      }
+
+      if (msg.type === "update") {
+
+        current.x = Number(msg.x) || 0;
+        current.y = Number(msg.y) || 0;
+        current.z = Number(msg.z) || 0;
+        current.rotation = Number(msg.rotation) || 0;
+
+        if (msg.weapon) {
+          current.weapon =
+            String(msg.weapon).slice(0, 30);
+        }
+
+        broadcast({
+          type: "players",
+          players: [...players.values()]
+        });
+      }
+
+      if (msg.type === "shoot") {
+
+        const target =
+          players.get(String(msg.target));
+
+        if (!target || target.id === id) {
+          return;
+        }
+
+        const damage = Math.max(
+          1,
+          Math.min(
+            100,
+            Number(msg.damage) || 25
+          )
+        );
+
+        target.hp -= damage;
+
+        if (target.hp <= 0) {
+
+          target.hp = 100;
+          current.kills++;
+
+          broadcast({
+            type: "kill",
+            killer: current.name,
+            victim: target.name
+          });
+        }
+
+        broadcast({
+          type: "players",
+          players: [...players.values()]
+        });
+      }
+
+      if (msg.type === "chat") {
+
+        const text = String(msg.text || "")
+          .trim()
+          .slice(0, 120);
+
+        if (!text) return;
+
+        broadcast({
+          type: "chat",
+          name: current.name,
+          text
+        });
+      }
+
+    } catch (error) {
+
+      console.log(
+        "Invalid message:",
+        error.message
+      );
+
+    }
+  });
+
+  socket.on("close", () => {
+
+    players.delete(id);
+
+    broadcast({
+      type: "players",
+      players: [...players.values()]
+    });
+
+  });
+
+});
+
+server.listen(PORT, () => {
+
+  console.log(
+    `🐂 BULL TERRORS ONLINE running on port ${PORT}`
+  );
+
+});
